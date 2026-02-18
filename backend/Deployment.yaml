@@ -1,35 +1,37 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
- name: dydemo-backend
+  name: dydemo-backend
+  namespace: dydemo
 spec:
- replicas: 1
- selector:
-   matchLabels:
-     app: dydemo-backend
- template:
-   metadata:
-     labels:
-       app: dydemo-backend
-   spec:
-     containers:
-     - name: dydemo-backend-container
-       image: dydemo/backend:1.0
-       imagePullPolicy: IfNotPresent
-       ports:
-       - containerPort: 5000
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dydemo-backend
+  template:
+    metadata:
+      labels:
+        app: dydemo-backend
+    spec:
+      containers:
+        - name: dydemo-backend-container
+          image: regga-h6e5btbnffaee8c7.azurecr.io/dydemo.backend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5000
 
 ---
 # service fronting above deployment
 apiVersion: v1
 kind: Service
 metadata:
- name: dydemo-backend-service
+  name: dydemo-backend-service
+  namespace: dydemo
 spec:
- selector:
-   app: dydemo-backend
- ports:
-   - protocol: TCP
-     port: 80
-     targetPort: 5000
- type: NodePort
+  selector:
+    app: dydemo-backend
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 5000
+  type: NodePort

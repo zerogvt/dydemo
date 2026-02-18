@@ -1,7 +1,8 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: deployment-curl
+  name: jumpbox-curl
+  namespace: dydemo
 spec:
   replicas: 1
   selector:
@@ -13,8 +14,8 @@ spec:
         app: curl-wait
     spec:
       containers:
-        - name: curl-wait
-          image: mycurl:latest
+        - name: jumpbox-curl
+          image: regga-h6e5btbnffaee8c7.azurecr.io/dydemo.jumpbox
           imagePullPolicy: IfNotPresent
           resources:
             limits:
