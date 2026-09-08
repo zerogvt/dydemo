@@ -15,7 +15,10 @@ spec:
     spec:
       containers:
         - name: dydemo-backend-container
-          image: regga-h6e5btbnffaee8c7.azurecr.io/dydemo.backend:latest
+          # Built locally by build_deploy.sh, which stamps a timestamp tag via
+          # a throwaway Kustomize overlay. Untagged here on purpose: this file
+          # stays untouched by a deploy.
+          image: dydemo.backend
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 5000

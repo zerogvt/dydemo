@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dydemo-loadgen
+  namespace: dydemo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dydemo-loadgen
+  template:
+    metadata:
+      labels:
+        app: dydemo-loadgen
+    spec:
+      containers:
+        - name: dydemo-loadgen
+          # Built locally by build_deploy.sh, which stamps a timestamp tag via
+          # a throwaway Kustomize overlay. Untagged here on purpose: this file
+          # stays untouched by a deploy.
+          image: dydemo.loadgen
+          imagePullPolicy: IfNotPresent
+          env:
+            # Namespace-relative on purpose, like the gateway's BACKEND_URL, so
+            # this resolves wherever the Deployment lands.
+            - name: GATEWAY_URL
+              value: http://dydemo-gateway-service
+            # Target seconds per request. The loop subtracts however long the
+            # request took, so this is the rate, not an added delay.
+            - name: INTERVAL
+              value: "1"
+            # Every path the gateway exposes. Drop /blowup here if constant
+            # gunicorn worker churn gets in the way of demoing something else.
+            - name: PATHS
+              value: "/ /client_error /server_error /latency /blowup /transaction"
+          resources:
+            limits:
+              cpu: "250m"
+              memory: "128Mi"
+            requests:
+              cpu: "50m"
+              memory: "64Mi"

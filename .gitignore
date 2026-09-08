@@ -55,3 +55,12 @@ coverage.xml
 # Environment variables
 .env
 .env.local
+
+
+# dynatrace
+# dynakube.yaml is safe to commit - it references the token Secret by name
+# (spec.tokens) and holds no credentials itself.
+# These DO hold real tokens and must never be committed:
+dynatrace-tokens.yaml
+secrets_env.sh
+dynakube.yaml.*

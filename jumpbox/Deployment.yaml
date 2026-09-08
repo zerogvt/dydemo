@@ -15,7 +15,10 @@ spec:
     spec:
       containers:
         - name: jumpbox-curl
-          image: regga-h6e5btbnffaee8c7.azurecr.io/dydemo.jumpbox
+          # Built locally by build_deploy.sh, which stamps a timestamp tag via
+          # a throwaway Kustomize overlay. Untagged here on purpose: this file
+          # stays untouched by a deploy.
+          image: dydemo.jumpbox
           imagePullPolicy: IfNotPresent
           resources:
             limits:

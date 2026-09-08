@@ -1,7 +1,7 @@
 ## Utility pod that allows easy troubleshooting and testing.
 
-Deploy with:
-`kubectl apply -f Deployment.yaml`
+Deployed along with the other components by the root build script:
+`bash ../build_deploy.sh`
 
 Get pod name:
 `kubectl get po ....`

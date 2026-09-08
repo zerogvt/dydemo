@@ -1,0 +1,109 @@
+apiVersion: dynatrace.com/v1beta6
+kind: DynaKube
+metadata:
+  name: dydemo
+  namespace: dynatrace
+  labels:
+    dynatrace.com/created-by: "dynatrace.kubernetes"
+  annotations:
+    feature.dynatrace.com/use-public-registry: "true"
+# Link to api reference for further information: https://docs.dynatrace.com/docs/ingest-from/setup-on-k8s/reference/dynakube-parameters
+#
+# Consolidated from two DynaKubes (dydemo + dydemo-agents) into one. A single
+# ActiveGate carries both roles: kubernetes-monitoring (polls the K8s API for
+# topology/events, feeds KSPM) and routing (the data path injected OneAgents
+# send telemetry to). Splitting them across two DynaKubes only pays off when
+# you scale the agent-facing tier independently - pointless on one node.
+spec:
+  apiUrl: https://nzu34348.live.dynatrace.com/api
+  tokens: dydemo
+  networkZone: dydemo
+
+  # Injection: match a label that actually exists on the namespace.
+  oneAgent:
+    applicationMonitoring:
+      namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: dydemo
+
+  logMonitoring: {}
+
+  activeGate:
+    capabilities:
+      - kubernetes-monitoring
+      - routing
+    resources:
+      requests:
+        cpu: 150m
+        memory: 512Mi
+      limits:
+        # CPU limit is a ceiling, not a reservation - the node has 12 cores at
+        # ~32% requested. ActiveGate startup runs several short-lived JVMs
+        # (agctl); throttling to 0.5 core pushed startup past the 150s
+        # liveness budget and crashlooped it. Memory stays minimal, with a bit
+        # more headroom than 1Gi now that one pod serves both capabilities.
+        cpu: "2"
+        memory: 1536Mi
+    replicas: 1
+
+  kspm:
+    mappedHostPaths:
+      - /boot
+      - /etc
+      - /proc/sys/kernel
+      - /sys/fs
+      - /usr/lib/systemd/system
+      - /var/lib
+
+  templates:
+    kspmNodeConfigurationCollector:
+      imageRef:
+        repository: public.ecr.aws/dynatrace/dynatrace-k8s-node-config-collector
+        tag: 1.5.12
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 128Mi
+    logMonitoring:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 300m
+          memory: 256Mi
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    dynatrace.com/created-by: "dynatrace.kubernetes"
+  name: dynatrace-kubernetes-monitoring-sensitive
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+      - secrets
+    verbs:
+      - list
+      - watch
+      - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    dynatrace.com/created-by: "dynatrace.kubernetes"
+  name: dynatrace-kubernetes-monitoring-sensitive
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: dynatrace-kubernetes-monitoring-sensitive
+subjects:
+  - kind: ServiceAccount
+    name: dynatrace-activegate
+    namespace: dynatrace

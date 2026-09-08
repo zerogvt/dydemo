@@ -22,8 +22,18 @@ spec:
     spec:
       containers:
         - name: dydemo-gateway-container
-          image: regga-h6e5btbnffaee8c7.azurecr.io/dydemo.gateway
+          # Built locally by build_deploy.sh, which stamps a timestamp tag via
+          # a throwaway Kustomize overlay. Untagged here on purpose: this file
+          # stays untouched by a deploy.
+          image: dydemo.gateway
           imagePullPolicy: IfNotPresent
+          env:
+            # Backend that /transaction calls. Namespace-relative on purpose,
+            # so this resolves to dydemo-backend-service in whichever namespace
+            # the Deployment lands in. Override with a full URL to point the
+            # gateway somewhere else without rebuilding the image.
+            - name: BACKEND_URL
+              value: http://dydemo-backend-service/
           ports:
             - containerPort: 5000
 

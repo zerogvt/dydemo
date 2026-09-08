@@ -2,6 +2,7 @@
 A sample flask web app that simulates various response codes and latencies.
 """
 
+import os
 from random import randint
 import sys
 from time import sleep
@@ -11,6 +12,19 @@ import requests
 from flask import Flask
 
 wapp = Flask(__name__)
+
+# Where /transaction forwards to. Overridable via env so the same image runs
+# in-cluster and on a laptop (e.g. BACKEND_URL=http://127.0.0.1:5000/).
+# The default is the namespace-relative Service name rather than a full
+# .svc.cluster.local FQDN: it resolves through the pod's DNS search path, so
+# it keeps working if this app is deployed into a different namespace.
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://dydemo-backend-service/")
+
+# Seconds to wait on the backend before giving up. Without a timeout a hung
+# backend pins a gunicorn worker forever, and with only 2 workers a couple of
+# stuck requests take the whole gateway down. Tune it down (or point
+# BACKEND_URL at something slow) to demo timeout behaviour on purpose.
+BACKEND_TIMEOUT = float(os.environ.get("BACKEND_TIMEOUT", "5"))
 
 
 dictConfig(
@@ -79,10 +93,19 @@ def blowup():
 
 @wapp.route("/transaction")
 def transaction():
-    url = "http://dydemo-backend-service.default.svc.cluster.local/"
-    #url = "http://127.0.0.1:5000/"
     data = {"transaction_id": uuid.uuid1().hex}
-    response = requests.post(url, json=data)
+    wapp.logger.info("transaction endpoint was reached, forwarding to %s", BACKEND_URL)
+    try:
+        response = requests.post(BACKEND_URL, json=data, timeout=BACKEND_TIMEOUT)
+    except requests.exceptions.Timeout:
+        # Map to the status codes a gateway is supposed to use, so a backend
+        # problem is distinguishable from this app's own /server_error rather
+        # than surfacing as an opaque Flask 500.
+        wapp.logger.error("backend %s timed out after %ss", BACKEND_URL, BACKEND_TIMEOUT)
+        return "Backend timed out\n", 504
+    except requests.exceptions.RequestException as exc:
+        wapp.logger.error("backend %s unreachable: %s", BACKEND_URL, exc)
+        return "Backend unreachable\n", 502
     return f"{response.text}\n", response.status_code
 
 

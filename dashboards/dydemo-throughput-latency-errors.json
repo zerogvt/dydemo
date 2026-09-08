@@ -1,0 +1,462 @@
+{
+  "version": 21,
+  "variables": [],
+  "settings": {},
+  "annotations": [],
+  "tiles": {
+    "0": {
+      "type": "markdown",
+      "content": "# dydemo - throughput, latency & errors\n\nThe `gateway` and `backend` services in namespace **`dydemo`** (sample-flask-app), scoped by `k8s.namespace.name == \"dydemo\"`. OneAgent app-only injection, no OTel SDK.\n\n| Path | Expected signal |\n|---|---|\n| `GET /` | 200 baseline |\n| `GET /client_error` | always **400** - counts as a 4xx response, *not* a failure |\n| `GET /server_error` | always **500** - counts as a failure |\n| `GET /latency` | 200 with a p90=2s / p99=5s **tail** |\n| `GET /blowup` | 200, but 30% `sys.exit(1)` - worker death |\n| `GET /transaction` | 201 via `backend`; **504** on timeout, **502** when unreachable |\n| `POST /` | the `backend` service, called by `/transaction` |\n\n> **Why `Failure rate %` can read 0% while 400s are flowing:** Dynatrace counts only server-side failures (5xx, crashes) in `dt.service.request.failure_count`. Client errors are tracked separately - see the **4xx responses** tile and the status-code charts."
+    },
+    "1": {
+      "title": "Requests",
+      "type": "data",
+      "query": "timeseries reqs = sum(dt.service.request.count), filter: { k8s.namespace.name == \"dydemo\" }\n| fieldsAdd requests = arraySum(reqs)\n| fields requests, reqs, interval, timeframe",
+      "visualization": "singleValue",
+      "visualizationSettings": {
+        "autoSelectVisualization": false
+      },
+      "querySettings": {
+        "maxResultRecords": 1000,
+        "defaultScanLimitGbytes": 500,
+        "maxResultMegaBytes": 1,
+        "defaultSamplingRatio": 10,
+        "enableSampling": false
+      },
+      "davis": {
+        "enabled": false,
+        "davisVisualization": {
+          "isAvailable": true
+        }
+      }
+    },
+    "2": {
+      "title": "Failure rate % (5xx / crashes)",
+      "type": "data",
+      "query": "timeseries { reqs = sum(dt.service.request.count), fails = sum(dt.service.request.failure_count) }, filter: { k8s.namespace.name == \"dydemo\" }\n| fieldsAdd failure_rate_pct = (arraySum(fails) * 100.0) / arraySum(reqs)\n| fields failure_rate_pct, fails, interval, timeframe",
+      "visualization": "singleValue",
+      "visualizationSettings": {
+        "autoSelectVisualization": false
+      },
+      "querySettings": {
+        "maxResultRecords": 1000,
+        "defaultScanLimitGbytes": 500,
+        "maxResultMegaBytes": 1,
+        "defaultSamplingRatio": 10,
+        "enableSampling": false
+      },
+      "davis": {
+        "enabled": false,
+        "davisVisualization": {
+          "isAvailable": true
+        }
+      }
+    },
+    "3": {
+      "title": "4xx responses",
+      "type": "data",
+      "query": "timeseries c4xx = sum(dt.service.request.count), filter: { k8s.namespace.name == \"dydemo\" and http.response.status_code >= 400 and http.response.status_code < 500 }\n| fieldsAdd client_errors = arraySum(c4xx)\n| fields client_errors, c4xx, interval, timeframe",
+      "visualization": "singleValue",
+      "visualizationSettings": {
+        "autoSelectVisualization": false
+      },
+      "querySettings": {
+        "maxResultRecords": 1000,
+        "defaultScanLimitGbytes": 500,
+        "maxResultMegaBytes": 1,
+        "defaultSamplingRatio": 10,
+        "enableSampling": false
+      },
+      "davis": {
+        "enabled": false,
+        "davisVisualization": {
+          "isAvailable": true
+        }
+      }
+    },
+    "4": {
+      "title": "p95 latency (ms)",
+      "type": "data",
+      "query": "timeseries p95 = percentile(dt.service.request.response_time, 95), filter: { k8s.namespace.name == \"dydemo\" }\n| fieldsAdd p95_ms = arrayAvg(p95) / 1000\n| fields p95_ms, p95, interval, timeframe",
+      "visualization": "singleValue",
+      "visualizationSettings": {
+        "autoSelectVisualization": false
+      },
+      "querySettings": {
+        "maxResultRecords": 1000,
+        "defaultScanLimitGbytes": 500,
+        "maxResultMegaBytes": 1,
+        "defaultSamplingRatio": 10,
+        "enableSampling": false
+      },
+      "davis": {
+        "enabled": false,
+        "davisVisualization": {
+          "isAvailable": true
+        }
+      }
+    },
+    "5": {
+      "title": "p99 latency (ms)",
+      "type": "data",
+      "query": "timeseries p99 = percentile(dt.service.request.response_time, 99), filter: { k8s.namespace.name == \"dydemo\" }\n| fieldsAdd p99_ms = arrayAvg(p99) / 1000\n| fields p99_ms, p99, interval, timeframe",
+      "visualization": "singleValue",
+      "visualizationSettings": {
+        "autoSelectVisualization": false
+      },
+      "querySettings": {
+        "maxResultRecords": 1000,
+        "defaultScanLimitGbytes": 500,
+        "maxResultMegaBytes": 1,
+        "defaultSamplingRatio": 10,
+        "enableSampling": false
+      },
+      "davis": {
+        "enabled": false,
+        "davisVisualization": {
+          "isAvailable": true
+        }
+      }
+    },
+    "6": {
+      "type": "markdown",
+      "content": "## Throughput"
+    },
+    "7": {
+      "title": "Requests/min by endpoint (all paths)",
+      "type": "data",
+      "query": "timeseries reqs = sum(dt.service.request.count), by:{endpoint.name}, filter: { k8s.namespace.name == \"dydemo\" }",
+      "visualization": "lineChart",
+      "visualizationSettings": {
+        "autoSelectVisualization": false
+      },
+      "querySettings": {
+        "maxResultRecords": 1000,
+        "defaultScanLimitGbytes": 500,
+        "maxResultMegaBytes": 1,
+        "defaultSamplingRatio": 10,
+        "enableSampling": false
+      },
+      "davis": {
+        "enabled": false,
+        "davisVisualization": {
+          "isAvailable": true
+        }
+      }
+    },
+    "8": {
+      "title": "Requests/min by HTTP status code",
+      "type": "data",
+      "query": "timeseries reqs = sum(dt.service.request.count), by:{http.response.status_code}, filter: { k8s.namespace.name == \"dydemo\" }",
+      "visualization": "areaChart",
+      "visualizationSettings": {
+        "autoSelectVisualization": false
+      },
+      "querySettings": {
+        "maxResultRecords": 1000,
+        "defaultScanLimitGbytes": 500,
+        "maxResultMegaBytes": 1,
+        "defaultSamplingRatio": 10,
+        "enableSampling": false
+      },
+      "davis": {
+        "enabled": false,
+        "davisVisualization": {
+          "isAvailable": true
+        }
+      }
+    },
+    "9": {
+      "type": "markdown",
+      "content": "## Latency - watch p50 stay flat while p90/p99 jump; that's `/latency`'s deliberate tail, not uniform slowness"
+    },
+    "10": {
+      "title": "Latency percentiles (ms)",
+      "type": "data",
+      "query": "timeseries { p50 = percentile(dt.service.request.response_time, 50), p90 = percentile(dt.service.request.response_time, 90), p95 = percentile(dt.service.request.response_time, 95), p99 = percentile(dt.service.request.response_time, 99) }, filter: { k8s.namespace.name == \"dydemo\" }\n| fieldsAdd p50_ms = p50[] / 1000, p90_ms = p90[] / 1000, p95_ms = p95[] / 1000, p99_ms = p99[] / 1000\n| fields timeframe, interval, p50_ms, p90_ms, p95_ms, p99_ms",
+      "visualization": "lineChart",
+      "visualizationSettings": {
+        "autoSelectVisualization": false
+      },
+      "querySettings": {
+        "maxResultRecords": 1000,
+        "defaultScanLimitGbytes": 500,
+        "maxResultMegaBytes": 1,
+        "defaultSamplingRatio": 10,
+        "enableSampling": false
+      },
+      "davis": {
+        "enabled": false,
+        "davisVisualization": {
+          "isAvailable": true
+        }
+      }
+    },
+    "11": {
+      "title": "p95 latency by endpoint (ms)",
+      "type": "data",
+      "query": "timeseries p95 = percentile(dt.service.request.response_time, 95), by:{endpoint.name}, filter: { k8s.namespace.name == \"dydemo\" }\n| fieldsAdd p95_ms = p95[] / 1000\n| fields timeframe, interval, endpoint.name, p95_ms",
+      "visualization": "lineChart",
+      "visualizationSettings": {
+        "autoSelectVisualization": false
+      },
+      "querySettings": {
+        "maxResultRecords": 1000,
+        "defaultScanLimitGbytes": 500,
+        "maxResultMegaBytes": 1,
+        "defaultSamplingRatio": 10,
+        "enableSampling": false
+      },
+      "davis": {
+        "enabled": false,
+        "davisVisualization": {
+          "isAvailable": true
+        }
+      }
+    },
+    "12": {
+      "type": "markdown",
+      "content": "## Errors - 400 from `/client_error`, 500 from `/server_error`, 502/504 from `/transaction` when the backend times out or is unreachable"
+    },
+    "13": {
+      "title": "Error responses/min by status code (>= 400)",
+      "type": "data",
+      "query": "timeseries errs = sum(dt.service.request.count), by:{http.response.status_code}, filter: { k8s.namespace.name == \"dydemo\" and http.response.status_code >= 400 }",
+      "visualization": "lineChart",
+      "visualizationSettings": {
+        "autoSelectVisualization": false
+      },
+      "querySettings": {
+        "maxResultRecords": 1000,
+        "defaultScanLimitGbytes": 500,
+        "maxResultMegaBytes": 1,
+        "defaultSamplingRatio": 10,
+        "enableSampling": false
+      },
+      "davis": {
+        "enabled": false,
+        "davisVisualization": {
+          "isAvailable": true
+        }
+      }
+    },
+    "14": {
+      "title": "Error total by status code and endpoint",
+      "type": "data",
+      "query": "timeseries errs = sum(dt.service.request.count), by:{http.response.status_code, endpoint.name}, filter: { k8s.namespace.name == \"dydemo\" and http.response.status_code >= 400 }\n| fieldsAdd errors = arraySum(errs)\n| fields http.response.status_code, endpoint.name, errors\n| sort errors desc",
+      "visualization": "table",
+      "visualizationSettings": {
+        "autoSelectVisualization": false
+      },
+      "querySettings": {
+        "maxResultRecords": 1000,
+        "defaultScanLimitGbytes": 500,
+        "maxResultMegaBytes": 1,
+        "defaultSamplingRatio": 10,
+        "enableSampling": false
+      },
+      "davis": {
+        "enabled": false,
+        "davisVisualization": {
+          "isAvailable": true
+        }
+      }
+    },
+    "15": {
+      "type": "markdown",
+      "content": "## Per-endpoint detail - every path across both services, with throughput, failure rate and latency percentiles side by side"
+    },
+    "16": {
+      "title": "Endpoint breakdown (gateway + backend)",
+      "type": "data",
+      "query": "timeseries { reqs = sum(dt.service.request.count), fails = sum(dt.service.request.failure_count), p50 = percentile(dt.service.request.response_time, 50), p95 = percentile(dt.service.request.response_time, 95), p99 = percentile(dt.service.request.response_time, 99) }, by:{dt.service.name, endpoint.name}, filter: { k8s.namespace.name == \"dydemo\" }\n| fieldsAdd requests = arraySum(reqs), failures = arraySum(fails), p50_ms = arrayAvg(p50) / 1000, p95_ms = arrayAvg(p95) / 1000, p99_ms = arrayAvg(p99) / 1000\n| fieldsAdd error_rate_pct = (failures * 100.0) / requests\n| fields dt.service.name, endpoint.name, requests, failures, error_rate_pct, p50_ms, p95_ms, p99_ms\n| sort requests desc",
+      "visualization": "table",
+      "visualizationSettings": {
+        "autoSelectVisualization": false
+      },
+      "querySettings": {
+        "maxResultRecords": 1000,
+        "defaultScanLimitGbytes": 500,
+        "maxResultMegaBytes": 1,
+        "defaultSamplingRatio": 10,
+        "enableSampling": false
+      },
+      "davis": {
+        "enabled": false,
+        "davisVisualization": {
+          "isAvailable": true
+        }
+      }
+    },
+    "17": {
+      "type": "markdown",
+      "content": "## Crash & cross-service - `/blowup` worker death, and the `/transaction` -> `backend` hop"
+    },
+    "18": {
+      "title": "/blowup - requests vs failures (worker crashes)",
+      "type": "data",
+      "query": "timeseries { reqs = sum(dt.service.request.count), fails = sum(dt.service.request.failure_count) }, by:{endpoint.name}, filter: { k8s.namespace.name == \"dydemo\" and contains(endpoint.name, \"/blowup\") }",
+      "visualization": "lineChart",
+      "visualizationSettings": {
+        "autoSelectVisualization": false
+      },
+      "querySettings": {
+        "maxResultRecords": 1000,
+        "defaultScanLimitGbytes": 500,
+        "maxResultMegaBytes": 1,
+        "defaultSamplingRatio": 10,
+        "enableSampling": false
+      },
+      "davis": {
+        "enabled": false,
+        "davisVisualization": {
+          "isAvailable": true
+        }
+      }
+    },
+    "19": {
+      "title": "/transaction + backend - requests vs failures",
+      "type": "data",
+      "query": "timeseries { reqs = sum(dt.service.request.count), fails = sum(dt.service.request.failure_count) }, by:{dt.service.name, endpoint.name}, filter: { k8s.namespace.name == \"dydemo\" and (contains(endpoint.name, \"/transaction\") or dt.service.name == \"backend\") }",
+      "visualization": "lineChart",
+      "visualizationSettings": {
+        "autoSelectVisualization": false
+      },
+      "querySettings": {
+        "maxResultRecords": 1000,
+        "defaultScanLimitGbytes": 500,
+        "maxResultMegaBytes": 1,
+        "defaultSamplingRatio": 10,
+        "enableSampling": false
+      },
+      "davis": {
+        "enabled": false,
+        "davisVisualization": {
+          "isAvailable": true
+        }
+      }
+    }
+  },
+  "layouts": {
+    "0": {
+      "x": 0,
+      "y": 0,
+      "w": 24,
+      "h": 4
+    },
+    "1": {
+      "x": 0,
+      "y": 4,
+      "w": 5,
+      "h": 4
+    },
+    "2": {
+      "x": 5,
+      "y": 4,
+      "w": 5,
+      "h": 4
+    },
+    "3": {
+      "x": 10,
+      "y": 4,
+      "w": 4,
+      "h": 4
+    },
+    "4": {
+      "x": 14,
+      "y": 4,
+      "w": 5,
+      "h": 4
+    },
+    "5": {
+      "x": 19,
+      "y": 4,
+      "w": 5,
+      "h": 4
+    },
+    "6": {
+      "x": 0,
+      "y": 8,
+      "w": 24,
+      "h": 1
+    },
+    "7": {
+      "x": 0,
+      "y": 9,
+      "w": 12,
+      "h": 7
+    },
+    "8": {
+      "x": 12,
+      "y": 9,
+      "w": 12,
+      "h": 7
+    },
+    "9": {
+      "x": 0,
+      "y": 16,
+      "w": 24,
+      "h": 1
+    },
+    "10": {
+      "x": 0,
+      "y": 17,
+      "w": 12,
+      "h": 7
+    },
+    "11": {
+      "x": 12,
+      "y": 17,
+      "w": 12,
+      "h": 7
+    },
+    "12": {
+      "x": 0,
+      "y": 24,
+      "w": 24,
+      "h": 1
+    },
+    "13": {
+      "x": 0,
+      "y": 25,
+      "w": 12,
+      "h": 7
+    },
+    "14": {
+      "x": 12,
+      "y": 25,
+      "w": 12,
+      "h": 7
+    },
+    "15": {
+      "x": 0,
+      "y": 32,
+      "w": 24,
+      "h": 1
+    },
+    "16": {
+      "x": 0,
+      "y": 33,
+      "w": 24,
+      "h": 9
+    },
+    "17": {
+      "x": 0,
+      "y": 42,
+      "w": 24,
+      "h": 1
+    },
+    "18": {
+      "x": 0,
+      "y": 43,
+      "w": 12,
+      "h": 7
+    },
+    "19": {
+      "x": 12,
+      "y": 43,
+      "w": 12,
+      "h": 7
+    }
+  }
+}
