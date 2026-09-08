@@ -1,6 +1,6 @@
-# sample-flask-app
+# dydemo
 
-A deliberately misbehaving Flask app on Kubernetes, used as a demo and test bed
+A deliberately misbehaving system on Kubernetes, used as a demo and test bed
 for Dynatrace observability.
 
 The point isn't the app — it's the signals. Every endpoint simulates a
