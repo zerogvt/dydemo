@@ -13,7 +13,7 @@ tracing code in the app itself.
 
 ```
                   ┌──────────────┐        ┌──────────────┐
-  you ────────────▶   gateway     ───────▶    backend    │
+  you ────────────▶   gateway     ───────▶    backend   │
   (NodePort :80)  │  (Flask,     │  POST  │   (Flask,    │
                   │   :5000)     │  JSON  │    :5000)    │
                   └──────────────┘        └──────────────┘
@@ -162,20 +162,7 @@ kubectl create secret generic dydemo -n dynatrace \
   --from-literal=dataIngestToken='dt0c01....' \
   --dry-run=client -o yaml > dynatrace-tokens.yaml
 ```
-
-Or write it by hand, using `stringData` so you don't have to base64 anything:
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: dydemo
-  namespace: dynatrace
-type: Opaque
-stringData:
-  apiToken: dt0c01....
-  dataIngestToken: dt0c01....
-```
+Use k8s app in your dynatrace tenant to create these tokens. 
 
 Two constraints on that Secret: its name must match `spec.tokens` in
 `dynakube.yaml` (`dydemo`), and it must exist **before** the DynaKube is
@@ -206,7 +193,7 @@ What to change for your own environment:
   startup past the liveness probe's ~150s budget, which crashloops the pod with
   `exit 143` and no OOM in sight.
 
-A single ActiveGate carries both roles:
+A single ActiveGate carries both roles (again due to being sized for a small laptop):
 
 ```yaml
   activeGate:
@@ -215,12 +202,8 @@ A single ActiveGate carries both roles:
       - routing                 # the data path injected OneAgents report to
 ```
 
-Splitting those across two DynaKubes only pays off when the agent-facing tier
-needs to scale independently; on one node it just doubles the footprint. Note
-that only **one Agent per node** is supported, so a second DynaKube carrying
-its own `oneAgent` block is rejected by the webhook while this one is deployed
-— and a restructure needs `kubectl delete dynakube <old>` *before* the apply,
-since `kubectl apply` never prunes what you removed from a manifest.
+Splitting those across two DynaKubes only pays off when the agent-facing tier (routing)
+needs to scale independently; on one node it just doubles the footprint. 
 
 Teardown:
 
@@ -271,5 +254,4 @@ Then `curl localhost:8000/transaction`.
   `ErrImagePull`.
 - Both Services are `NodePort`. `port-forward` is usually easier:
   `kubectl port-forward -n dydemo service/dydemo-gateway-service 8080:80`.
-- The Dockerfiles install `build-essential` and `gcc` and never remove them,
-  which is dead weight for pure-Python dependencies. Harmless for a demo.
+
