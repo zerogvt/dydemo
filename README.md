@@ -162,7 +162,7 @@ kubectl create secret generic dydemo -n dynatrace \
   --from-literal=dataIngestToken='dt0c01....' \
   --dry-run=client -o yaml > dynatrace-tokens.yaml
 ```
-Use k8s app in your dynatrace tenant to create these tokens. 
+Use k8s app in your dynatrace tenant to [create these tokens](https://docs.dynatrace.com/docs/ingest-from/setup-on-k8s/quickstart). 
 
 Two constraints on that Secret: its name must match `spec.tokens` in
 `dynakube.yaml` (`dydemo`), and it must exist **before** the DynaKube is
