@@ -100,7 +100,7 @@ there is nothing to do here — it walks all six gateway endpoints in a loop at
 about one request per second, indefinitely. Watch it:
 
 ```bash
-kubectl logs -n dydemo deployment/dydemo-loadgen -f
+kubectl logs -n dydemo deployment/dydemo-loadgen --all-pods=true -f
 ```
 
 That steady baseline is the point: percentiles, error rates and Davis
