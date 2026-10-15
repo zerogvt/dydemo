@@ -35,8 +35,8 @@ tracing code in the app itself.
 | [backend/](backend/) | Flask + gunicorn (2 workers) | A POST-only JSON echo. Exists so `/transaction` produces a two-service distributed trace. |
 | [loadgen/](loadgen/) | Alpine + curl | Walks every gateway endpoint in a loop at ~1 req/sec, unattended. Sustained traffic is what makes percentiles, error rates and baselining meaningful. |
 | [jumpbox/](jumpbox/) | Alpine + curl | Utility pod for poking the services by hand from inside the cluster. |
-| [dynakube.yaml](dynakube.yaml) | Secret + DynaKube CR + RBAC | **The live Dynatrace config.** App-only OneAgent injection into `dydemo`, log monitoring, KSPM, and a single ActiveGate holding both `kubernetes-monitoring` and `routing`. References the token Secret by name only, so it holds no credentials itself. See [Install Dynatrace](#3-install-dynatrace). |
-| `dynatrace-tokens.yaml` | Secret | Your `apiToken` and `dataIngestToken`. **Gitignored** — not in this repo; create it yourself, see [Install Dynatrace](#3-install-dynatrace). |
+| [dynatrace/k8s/dynakube.yaml](dynatrace/k8s/dynakube.yaml) | DynaKube CR | **The live Dynatrace config, for the whole cluster.** App-only OneAgent injection into every namespace (opt-out per namespace), log monitoring for every namespace, and a single ActiveGate holding both `kubernetes-monitoring` and `routing`. Not specific to dydemo: one per cluster, shared by every project on it. References the token Secret by name only, so it holds no credentials itself. See [Install Dynatrace](#3-install-dynatrace). |
+| `dynatrace/k8s/dynatrace-tokens.yaml` | Secret | Your `apiToken` and `dataIngestToken`. **Gitignored** — not in this repo; create it yourself, see [Install Dynatrace](#3-install-dynatrace). |
 | [dashboards/](dashboards/) | Exported dashboard JSON | Throughput, latency and error dashboards for the `dydemo` services, ready to upload through the Dynatrace UI. |
 
 ## The endpoints
@@ -132,6 +132,11 @@ kubectl get pods -n dydemo -w
 
 ### 3. Install Dynatrace
 
+Dynatrace is installed once per cluster, not per project: a single DynaKube
+in [dynatrace/k8s/dynakube.yaml](dynatrace/k8s/dynakube.yaml) observes every
+namespace, `dydemo` included. If it is already running on your cluster, skip
+to restarting the app at the end of this section.
+
 Two steps: the Operator via Helm, then the DynaKube that tells it what to
 monitor.
 
@@ -148,27 +153,37 @@ Next the tokens, then the DynaKube. They are two separate files, applied in
 that order:
 
 ```bash
-kubectl apply -f dynatrace-tokens.yaml   # the Secret
-kubectl apply -f dynakube.yaml           # the DynaKube
+kubectl apply -f dynatrace/k8s/dynatrace-tokens.yaml   # the Secret
+kubectl apply -f dynatrace/k8s/dynakube.yaml           # the DynaKube
 ```
 
-`dynatrace-tokens.yaml` holds your credentials and is **gitignored** — it is
+`dynatrace/k8s/dynatrace-tokens.yaml` holds your credentials and is **gitignored** — it is
 not in this repository, so create it yourself. The easiest way is to let
 `kubectl` generate it:
 
 ```bash
-kubectl create secret generic dydemo -n dynatrace \
+kubectl create secret generic docker-desktop -n dynatrace \
   --from-literal=apiToken='dt0c01....' \
   --from-literal=dataIngestToken='dt0c01....' \
-  --dry-run=client -o yaml > dynatrace-tokens.yaml
+  --dry-run=client -o yaml > dynatrace/k8s/dynatrace-tokens.yaml
 ```
 Use k8s app in your dynatrace tenant to [create these tokens](https://docs.dynatrace.com/docs/ingest-from/setup-on-k8s/quickstart). 
 
 Two constraints on that Secret: its name must match `spec.tokens` in
-`dynakube.yaml` (`dydemo`), and it must exist **before** the DynaKube is
-applied — the DynaKube never comes up otherwise. `dynakube.yaml` only
-references it by name, which is why that file carries no credentials and is
-safe to commit.
+`dynatrace/k8s/dynakube.yaml` (`docker-desktop`), and it must exist **before**
+the DynaKube is applied — the DynaKube never comes up otherwise. The DynaKube
+only references it by name, which is why that file carries no credentials and
+is safe to commit.
+
+Only one DynaKube per cluster may inject into a given namespace; the Operator
+rejects a second one whose namespaces overlap. If you still have an older
+per-project DynaKube (such as the `dydemo` one that used to live in this
+repo's root `dynakube.yaml`), delete it first:
+
+```bash
+kubectl get dynakube -n dynatrace
+kubectl delete dynakube dydemo -n dynatrace
+```
 
 `dataIngestToken` is only needed if you're ingesting metrics or events;
 `apiToken` alone is enough for the rest.
@@ -182,13 +197,23 @@ kubectl get dynakube -n dynatrace          # want STATUS: Running
 kubectl get pods -n dynatrace              # ActiveGate should be 1/1, 0 restarts
 ```
 
+Every namespace is injected except the Operator's own and the `kube-*` ones.
+To leave another namespace out, label it and restart its pods:
+
+```bash
+kubectl label namespace <ns> dynatrace.com/inject=false
+```
+
+A single pod can opt out with the annotation `oneagent.dynatrace.com/inject: "false"`.
+
 What to change for your own environment:
 
 - **`apiUrl`** — your tenant, including the trailing `/api`.
-- **`networkZone`** — `dydemo` as written. It shows up in your tenant once the
-  ActiveGate registers with that name.
+- **`metadata.name`** and **`spec.tokens`** — `docker-desktop` as written. The
+  DynaKube's name is what the cluster is called in Dynatrace; rename it (and
+  the Secret) for another cluster.
 - **`activeGate.resources`** — sized for a laptop: 512Mi request, 1.5Gi limit.
-  Keep the *CPU* limit generous. ActiveGate startup runs a series of
+  Keep the *CPU* limit at a core or more. ActiveGate startup runs a series of
   short-lived JVMs (`agctl`), and throttling it below roughly one core stretches
   startup past the liveness probe's ~150s budget, which crashloops the pod with
   `exit 143` and no OOM in sight.
@@ -198,17 +223,18 @@ A single ActiveGate carries both roles (again due to being sized for a small lap
 ```yaml
   activeGate:
     capabilities:
-      - kubernetes-monitoring   # polls the K8s API: topology, events, KSPM
+      - kubernetes-monitoring   # polls the K8s API: topology, events
       - routing                 # the data path injected OneAgents report to
 ```
 
 Splitting those across two DynaKubes only pays off when the agent-facing tier (routing)
 needs to scale independently; on one node it just doubles the footprint. 
 
-Teardown:
+Teardown. The DynaKube is cluster-wide, so deleting it stops monitoring every
+namespace, not just `dydemo`:
 
 ```bash
-kubectl delete -f dynakube.yaml
+kubectl delete -f dynatrace/k8s/dynakube.yaml
 helm uninstall dynatrace-operator -n dynatrace
 ```
 

@@ -1,0 +1,96 @@
+# Cluster-wide Dynatrace Operator DynaKube: one install that observes every
+# namespace in the cluster, instead of one DynaKube per project.
+#
+# There must be only one of these per cluster. Two DynaKubes doing application
+# monitoring may not select the same namespace, and the operator rejects the
+# second one if they overlap, so any per-project DynaKube (such as the dydemo
+# one in the repo root's dynakube.yaml) has to be deleted before this is applied.
+#
+# What it covers:
+#   - OneAgent injection into every namespace. The operator already skips its
+#     own namespace and the kube-* ones. To leave another namespace out, label it
+#       kubectl label namespace <ns> dynatrace.com/inject=false
+#     and restart its pods. A single pod can opt out with the pod annotation
+#     oneagent.dynatrace.com/inject: "false".
+#   - Container logs from every namespace.
+#   - One ActiveGate for Kubernetes monitoring and for routing OneAgent traffic.
+#   - No telemetryIngest / otelCollector, no KSPM, no Live Debugging.
+#
+# Needs the Dynatrace Operator installed first (it creates the dynatrace
+# namespace and the DynaKube CRD), and the token Secret named in spec.tokens,
+# which is NOT kept in the repo:
+#
+#   kubectl create secret generic docker-desktop -n dynatrace \
+#     --from-literal=apiToken='dt0...' --from-literal=dataIngestToken='dt0...'
+#
+# The DynaKube's name is what the cluster is called in Dynatrace, hence
+# docker-desktop (the kube context this runs on). Rename both it and the Secret
+# for another cluster.
+#
+# Injection happens when a pod is created, so pods already running when this is
+# applied stay uninstrumented until they are restarted.
+#
+# Field reference:
+# https://docs.dynatrace.com/docs/ingest-from/setup-on-k8s/reference/dynakube-parameters
+apiVersion: dynatrace.com/v1beta6
+kind: DynaKube
+metadata:
+  name: docker-desktop
+  namespace: dynatrace
+  annotations:
+    # With applicationMonitoring there is no OneAgent on the node, so log
+    # monitoring runs standalone, as its own DaemonSet, and the operator refuses
+    # the DynaKube unless it knows which image that DaemonSet runs. This flag
+    # makes it pull every component (log module, ActiveGate, code modules) from
+    # Dynatrace's public registry, public.ecr.aws/dynatrace, at versions it
+    # picks itself, instead of us pinning a log-module tag in
+    # spec.templates.logMonitoring.imageRef. Checked against operator v1.10.2
+    # (pkg/api/validation/dynakube/logmonitoring.go). With platform tokens
+    # (dt0s16...) the operator uses the public registry anyway and warns that
+    # this flag is ignored. It is kept so the file still validates with classic
+    # API tokens.
+    feature.dynatrace.com/use-public-registry: "true"
+spec:
+  apiUrl: https://nzu34348.live.dynatrace.com/api
+  # Secret in the dynatrace namespace with keys apiToken and dataIngestToken.
+  tokens: docker-desktop
+
+  oneAgent:
+    applicationMonitoring:
+      # Every namespace except those labelled dynatrace.com/inject=false.
+      # NotIn also matches namespaces that have no such label at all, so new
+      # namespaces are monitored without any extra step.
+      namespaceSelector:
+        matchExpressions:
+          - key: dynatrace.com/inject
+            operator: NotIn
+            values:
+              - "false"
+
+  # Picks up container stdout/stderr from every namespace. ingestRuleMatchers is
+  # left out on purpose: it is what would narrow this down, and it is immutable
+  # once set, so adding it later means deleting and recreating the DynaKube.
+  logMonitoring: {}
+
+  activeGate:
+    # Pinned, because use-public-registry cannot pick an ActiveGate on its own
+    # here: the operator failed with "image discovery failed for activegate: no
+    # matching image in DT API response". On 2026-09-30 the public registry had
+    # 1.347 only as -java17 builds, and 1.345.70 was the newest plain one.
+    # Update this by hand.
+    image: public.ecr.aws/dynatrace/dynatrace-activegate:1.345.70.20260918-003121
+    capabilities:
+      - kubernetes-monitoring   # the Kubernetes app, and required by logMonitoring
+      - routing                 # OneAgent traffic goes through the cluster
+    replicas: 1
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        # Keep the CPU limit at a core or more: ActiveGate startup runs several
+        # short-lived JVMs, and throttling it further pushes startup past the
+        # liveness probe and crashloops the pod.
+        cpu: 1000m
+        # One pod now routes the traffic of every injected pod in the cluster.
+        memory: 1536Mi
