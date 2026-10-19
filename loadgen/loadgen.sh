@@ -38,10 +38,16 @@ while true; do
     # 000 means curl never got a response - connection refused or reset. That
     # is a real signal here, not a script bug: /blowup kills a gunicorn worker
     # outright, so in-flight requests get dropped.
-    code="$(curl -s -o /dev/null --max-time "${MAX_TIME}" -w '%{http_code}' "${GATEWAY_URL}${p}")"
+    #
+    # The gateway returns the call's X-Request-ID, which is also in every
+    # gateway and backend log line for it, so a line here can be followed
+    # through both services. %header{} needs curl 7.84 or newer.
+    out="$(curl -s -o /dev/null --max-time "${MAX_TIME}" -w '%{http_code} %header{x-request-id}' "${GATEWAY_URL}${p}")"
+    code="${out%% *}"
+    rid="${out#* }"
 
     elapsed="$(( $(date +%s) - start ))"
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') ${p} -> ${code} (${elapsed}s)"
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') ${p} -> ${code} (${elapsed}s) request_id=${rid:--}"
 
     # Sleep only the remainder of INTERVAL, so the loop holds ~1 request/sec
     # overall instead of 1/sec *plus* however long each request took. When a

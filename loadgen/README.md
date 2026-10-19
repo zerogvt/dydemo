@@ -17,25 +17,28 @@ Cycles through the six gateway paths in order, one request at a time:
 /  →  /client_error  →  /server_error  →  /latency  →  /blowup  →  /transaction
 ```
 
-Each request is logged with its status code and duration, so `kubectl logs`
-doubles as a quick check that the gateway is behaving as advertised:
+Each request is logged with its status code, duration and the `X-Request-ID`
+the gateway returned, so `kubectl logs` doubles as a quick check that the
+system is behaving as advertised, and any line can be followed into the
+gateway's and backend's logs by its `request_id`:
 
 ```bash
 kubectl logs -n dydemo deployment/dydemo-loadgen -f
 ```
 
 ```
-2026-09-08T10:31:02Z / -> 200 (0s)
-2026-09-08T10:31:03Z /client_error -> 400 (0s)
-2026-09-08T10:31:04Z /server_error -> 500 (0s)
-2026-09-08T10:31:07Z /latency -> 200 (2s)
-2026-09-08T10:31:08Z /blowup -> 000 (0s)
-2026-09-08T10:31:09Z /transaction -> 201 (0s)
+2026-10-19T12:16:02Z / -> 200 (0s) request_id=572d12a04d8148719e62d98523a33eed
+2026-10-19T12:16:03Z /client_error -> 400 (0s) request_id=bf8cf46a3d7c4008a886e280c299ff3a
+2026-10-19T12:16:04Z /server_error -> 500 (0s) request_id=c6a94da57bb740dcae57be2299654c8d
+2026-10-19T12:16:07Z /latency -> 200 (2s) request_id=ef73b46d8bad4ec2b5a128072bcae553
+2026-10-19T12:16:08Z /blowup -> 502 (0s) request_id=6be2f243a82b4b3d81b0b72509c88dd3
+2026-10-19T12:16:09Z /transaction -> 201 (0s) request_id=c903b01a13e945d89b1ff35757d42da4
 ```
 
-A `000` is not a script error — it means curl got no response at all. That
-happens when `/blowup` has just killed the gunicorn worker handling the
-request, which is exactly the signal that endpoint exists to produce.
+A `502` from `/blowup` means the backend worker handling that request was
+killed, which is exactly the signal that endpoint exists to produce; the
+gateway answers 502 for the dropped connection. A `000` with `request_id=-`
+means curl got no response at all, i.e. the gateway itself was unreachable.
 
 ### Configuration
 

@@ -1,3 +1,17 @@
+A plain reverse proxy in front of the backend, where all the endpoints live.
+Every request, whatever its method and path, is forwarded unchanged and the
+backend's answer is relayed back, so every call is a two-service distributed
+trace. The gateway adds only two things of its own:
+
+- **`X-Request-ID`**: kept from the caller or generated, forwarded to the
+  backend, returned in the response, and printed in every log line.
+- **502 / 504**: when the backend is unreachable (including when `/blowup`
+  kills a backend worker mid-request) or slower than `BACKEND_TIMEOUT`.
+
+It runs gunicorn with threaded workers (`gthread`, 2 x 8 threads), because it
+spends its time waiting on the backend: with plain sync workers, two slow
+`/latency` calls would block every other request.
+
 ## Build and deploy
 
 Normally you deploy all three components together, from the repo root:
@@ -20,8 +34,8 @@ and locally. `Deployment.yaml` sets `BACKEND_URL` explicitly.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `BACKEND_URL` | `http://dydemo-backend-service/` | Where `/transaction` forwards to. Namespace-relative, so it resolves via the pod's DNS search path and survives a namespace change. |
-| `BACKEND_TIMEOUT` | `5` | Seconds to wait on the backend. `/transaction` returns 504 on timeout, 502 if the backend is unreachable. |
+| `BACKEND_URL` | `http://dydemo-backend-service/` | Where every request is forwarded to. Namespace-relative, so it resolves via the pod's DNS search path and survives a namespace change. |
+| `BACKEND_TIMEOUT` | `8` | Seconds to wait on the backend before answering 504; 502 if the backend is unreachable. Keep it above the backend's 5s `/latency` tail and below loadgen's 10s `MAX_TIME`. |
 
 Change one without rebuilding:
 `kubectl set env deployment/dydemo-gateway -n dydemo BACKEND_TIMEOUT=1`
@@ -29,7 +43,7 @@ Change one without rebuilding:
 
 ## Run dev server
 
-Needs the backend running too, otherwise `/transaction` returns 502.
+Needs the backend running too, otherwise every request returns 502.
 
 Backend, in one shell:
 `. ../venv/bin/activate`
@@ -40,16 +54,12 @@ Gateway, in another:
 `env FLASK_APP=gateway.py BACKEND_URL=http://127.0.0.1:5000/ python -m flask run --port 8000`
 
 
+## Tests
+
+`python -m unittest` from this directory. The backend is mocked, so they run
+on their own.
+
 ## Endpoints
 
-Each one simulates a different failure mode, for generating observability
-signals:
-
-| Endpoint | Behaviour |
-|----------|-----------|
-| `/` | 200 |
-| `/server_error` | 500, always |
-| `/client_error` | 400, always |
-| `/latency` | 200, with a p90 of 2s and a p99 of 5s |
-| `/blowup` | 200, but a 30% chance of killing the worker via `sys.exit(1)` |
-| `/transaction` | POSTs a UUID to the backend and relays its 201 — the one endpoint that crosses a service boundary |
+None of its own: see [backend/README.md](../backend/README.md) and
+[openapi.yaml](../openapi.yaml).
