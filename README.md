@@ -4,8 +4,8 @@ A deliberately misbehaving system on Kubernetes, used as a demo and test bed
 for Dynatrace observability.
 
 The point isn't the app — it's the signals. Every endpoint simulates a
-different failure mode (errors, latency tails, crashes, a cross-service call)
-so there is something real to detect, alert on, and trace. Instrumentation is
+different failure mode (errors, latency tails, crashes) and crosses a service
+boundary, so there is something real to detect, alert on, and trace. Instrumentation is
 agent-injected by the Dynatrace Operator; there is no OpenTelemetry SDK or
 tracing code in the app itself.
 
@@ -14,8 +14,8 @@ tracing code in the app itself.
 ```
                   ┌──────────────┐        ┌──────────────┐
   you ────────────▶   gateway     ───────▶    backend   │
-  (NodePort :80)  │  (Flask,     │  POST  │   (Flask,    │
-                  │   :5000)     │  JSON  │    :5000)    │
+  (NodePort :80)  │  (reverse    │  every │   (Flask,    │
+                  │   proxy)     │  call  │  endpoints)  │
                   └──────────────┘        └──────────────┘
                      ▲          ▲
        1 req/sec ────┘          └──── curl, by hand
@@ -31,8 +31,8 @@ tracing code in the app itself.
 
 | Component | What it is | Role |
 |-----------|------------|------|
-| [gateway/](gateway/) | Flask + gunicorn (2 workers) | The interesting one. Every endpoint is a different failure mode. Entry point via NodePort. |
-| [backend/](backend/) | Flask + gunicorn (2 workers) | A POST-only JSON echo. Exists so `/transaction` produces a two-service distributed trace. |
+| [gateway/](gateway/) | Flask + gunicorn (2 threaded workers) | A plain reverse proxy and the entry point, via NodePort. Forwards every request to the backend unchanged, so every call is a two-service distributed trace. |
+| [backend/](backend/) | Flask + gunicorn (2 workers) | The interesting one. Holds every endpoint; each is a different failure mode. |
 | [loadgen/](loadgen/) | Alpine + curl | Walks every gateway endpoint in a loop at ~1 req/sec, unattended. Sustained traffic is what makes percentiles, error rates and baselining meaningful. |
 | [jumpbox/](jumpbox/) | Alpine + curl | Utility pod for poking the services by hand from inside the cluster. |
 | [dynakube.yaml](dynakube.yaml) | Secret + DynaKube CR + RBAC | **The live Dynatrace config.** App-only OneAgent injection into `dydemo`, log monitoring, KSPM, and a single ActiveGate holding both `kubernetes-monitoring` and `routing`. References the token Secret by name only, so it holds no credentials itself. See [Install Dynatrace](#3-install-dynatrace). |
@@ -41,7 +41,9 @@ tracing code in the app itself.
 
 ## The endpoints
 
-All on the gateway. This table is the whole purpose of the project:
+Implemented by the backend, called through the gateway. This table is the
+whole purpose of the project (the full contract is in
+[openapi.yaml](openapi.yaml)):
 
 | Endpoint | Behaviour | Signal it produces |
 |----------|-----------|--------------------|
@@ -49,11 +51,30 @@ All on the gateway. This table is the whole purpose of the project:
 | `/server_error` | 500, always | Server-side failure rate |
 | `/client_error` | 400, always | Client-side failure rate |
 | `/latency` | 200, p90 of 2s and p99 of 5s | A response-time *tail*, not uniform slowness — what makes percentiles and baselining interesting |
-| `/blowup` | 200, but 30% chance of `sys.exit(1)` | Real worker death, pod restarts, dropped connections |
-| `/transaction` | POSTs a UUID to the backend, relays its 201 | A distributed trace crossing a service boundary |
+| `/blowup` | 200, but 30% chance of killing the backend worker (`os._exit(1)`) | Real worker death: the connection drops and the gateway answers 502. Gunicorn replaces the worker, so the pod doesn't restart |
+| `/transaction` | 201, JSON with a new `transaction_id` (GET or POST) | A successful "business" call, distinct from the plain baseline |
 
-`/transaction` also returns 504 if the backend times out and 502 if it's
-unreachable — see [gateway/README.md](gateway/README.md) for its config.
+On top of these, the gateway answers 504 if the backend takes longer than
+`BACKEND_TIMEOUT` (8s) and 502 if it's unreachable — see
+[gateway/README.md](gateway/README.md) for its config.
+
+### Following one call: `X-Request-ID`
+
+Every call carries an `X-Request-ID`. The gateway keeps the caller's or
+generates one, forwards it to the backend and returns it in the response, and
+both services print it in every log line for that call:
+
+```
+[...] INFO in gateway [request_id=4f2c...]: GET /latency -> http://dydemo-backend-service/latency
+[...] INFO in backend [request_id=4f2c...]: ...
+```
+
+loadgen prints it next to each status code, so a failure in its output can be
+looked up in both services' logs. It is not the Dynatrace trace ID — OneAgent
+links the gateway and backend spans by itself — but it also works in plain
+`kubectl logs`, and it ties logs to a call even where the logs don't carry
+the trace ID. `/transaction`'s `transaction_id` is a different thing again:
+it names the record that call creates.
 
 ## Prerequisites
 
@@ -96,7 +117,7 @@ half-finished build can't deploy a mix of generations.
 ### 2. Generate traffic
 
 [loadgen/](loadgen/) is deployed by the build script and starts on its own, so
-there is nothing to do here — it walks all six gateway endpoints in a loop at
+there is nothing to do here — it walks all six endpoints in a loop at
 about one request per second, indefinitely. Watch it:
 
 ```bash
@@ -124,10 +145,13 @@ while true; do curl -s dydemo-gateway-service/transaction; done
 while true; do curl -s dydemo-gateway-service/blowup; done
 ```
 
-Watch the crash-and-restart behaviour that `/blowup` causes with:
+`/blowup` kills a backend gunicorn worker, not the pod: the gunicorn master
+boots a replacement, so the pod's restart count stays at 0. Watch it happen
+in the backend's log, where each `crashing...` is followed by a new
+`Booting worker`:
 
 ```bash
-kubectl get pods -n dydemo -w
+kubectl logs -n dydemo deployment/dydemo-backend -f | grep -E 'crashing|Booting worker'
 ```
 
 ### 3. Install Dynatrace
@@ -229,7 +253,9 @@ what the dashboard assumes and how to point it at a different namespace.
 ## Running locally, without Kubernetes
 
 Useful for changing app behaviour without a build-push-deploy cycle. Both
-services are plain Flask apps; the gateway finds the backend via `BACKEND_URL`:
+services are plain Flask apps; the gateway finds the backend via `BACKEND_URL`.
+To run the unit tests, use `python -m unittest` in `backend/` or `gateway/`;
+they need only each service's own requirements:
 
 ```bash
 # shell 1
@@ -242,7 +268,8 @@ cd gateway && env FLASK_APP=gateway.py BACKEND_URL=http://127.0.0.1:5000/ \
   python -m flask run --port 8000
 ```
 
-Then `curl localhost:8000/transaction`.
+Then `curl -i localhost:8000/transaction` — note the `X-Request-ID` header in
+the response.
 
 ## Notes
 

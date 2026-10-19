@@ -25,5 +25,8 @@ USER appusr
 
 EXPOSE 5000
 
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "gateway:wapp", "--workers", "2"]
+# Threaded workers: the gateway spends its time waiting on the backend, and
+# with plain sync workers two slow /latency calls would block every other
+# request. gthread ships with gunicorn, so no extra dependency.
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "gateway:wapp", "--workers", "2", "--worker-class", "gthread", "--threads", "8"]
 
