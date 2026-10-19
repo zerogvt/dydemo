@@ -31,7 +31,7 @@ tracing code in the app itself.
 
 | Component | What it is | Role |
 |-----------|------------|------|
-| [gateway/](gateway/) | Flask + gunicorn (2 threaded workers) | A plain reverse proxy and the entry point, via NodePort. Forwards every request to the backend unchanged, so every call is a two-service distributed trace. |
+| [gateway/](gateway/) | Flask + gunicorn (2 threaded workers) | A plain reverse proxy and the entry point, via NodePort. One route per backend endpoint, each forwarding the request unchanged, so every call is a two-service distributed trace. |
 | [backend/](backend/) | Flask + gunicorn (2 workers) | The interesting one. Holds every endpoint; each is a different failure mode. |
 | [loadgen/](loadgen/) | Alpine + curl | Walks every gateway endpoint in a loop at ~1 req/sec, unattended. Sustained traffic is what makes percentiles, error rates and baselining meaningful. |
 | [jumpbox/](jumpbox/) | Alpine + curl | Utility pod for poking the services by hand from inside the cluster. |

@@ -39,6 +39,24 @@ class GatewayTest(unittest.TestCase):
         self.client.get("/")
         self.assertEqual(request.call_args.args[1], "http://dydemo-backend-service/")
 
+    def test_each_endpoint_has_its_own_route(self, request):
+        # OneAgent names requests after the route rule, so each endpoint must
+        # be its own rule, not one catch-all.
+        rules = {r.rule for r in gateway.wapp.url_map.iter_rules() if r.endpoint != "static"}
+        self.assertEqual(rules, {"/", "/server_error", "/client_error", "/latency", "/blowup", "/transaction"})
+        request.return_value = backend_response()
+        for path in sorted(rules):
+            self.client.get(path)
+            self.assertEqual(request.call_args.args[1], "http://dydemo-backend-service" + path)
+
+    def test_unknown_path_not_forwarded(self, request):
+        self.assertEqual(self.client.get("/nope").status_code, 404)
+        request.assert_not_called()
+
+    def test_method_not_allowed_not_forwarded(self, request):
+        self.assertEqual(self.client.post("/latency").status_code, 405)
+        request.assert_not_called()
+
     def test_relays_backend_errors_unchanged(self, request):
         request.return_value = backend_response(500, b"Server error\n")
         r = self.client.get("/server_error")

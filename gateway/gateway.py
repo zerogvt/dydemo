@@ -1,9 +1,9 @@
 """
 Reverse proxy in front of the backend.
 
-Every request, whatever its method and path, is forwarded to the backend and
-the backend's answer is relayed unchanged. All the demo's endpoints live in the
-backend, so each call is a two-service distributed trace.
+Each of the backend's endpoints has its own route here, which forwards the
+request to the backend and relays the answer unchanged. All the demo's
+endpoints live in the backend, so each call is a two-service distributed trace.
 """
 
 import logging
@@ -103,13 +103,12 @@ def gateway_error(status, message):
     return Response(f"{message}\n", status=status, mimetype="text/plain")
 
 
-@wapp.route("/", defaults={"path": ""}, methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
-@wapp.route("/<path:path>", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
-def proxy(path):
-    url = BACKEND_URL.rstrip("/") + "/" + path
+def forward(path):
+    """Forwards the current request to the backend's `path` and relays its answer."""
+    url = BACKEND_URL.rstrip("/") + path
     headers = {k: v for k, v in request.headers if k.lower() not in NOT_FORWARDED}
     headers[REQUEST_ID_HEADER] = g.request_id
-    wapp.logger.info("%s /%s -> %s", request.method, path, url)
+    wapp.logger.info("%s %s -> %s", request.method, path, url)
     try:
         upstream = requests.request(
             request.method,
@@ -132,6 +131,42 @@ def proxy(path):
         return gateway_error(502, "Backend unreachable")
     returned = [(k, v) for k, v in upstream.headers.items() if k.lower() not in NOT_RETURNED]
     return Response(upstream.content, status=upstream.status_code, headers=returned)
+
+
+# One route per backend endpoint, deliberately not a catch-all. OneAgent names
+# a Flask request after its route rule, so a single "/<path:path>" route would
+# put every call under one endpoint in Dynatrace. Methods match the backend's.
+# Anything else gets Flask's own 404 here and never reaches the backend.
+
+
+@wapp.route("/")
+def root():
+    return forward("/")
+
+
+@wapp.route("/server_error")
+def server_error():
+    return forward("/server_error")
+
+
+@wapp.route("/client_error")
+def client_error():
+    return forward("/client_error")
+
+
+@wapp.route("/latency")
+def latency():
+    return forward("/latency")
+
+
+@wapp.route("/blowup")
+def blowup():
+    return forward("/blowup")
+
+
+@wapp.route("/transaction", methods=["GET", "POST"])
+def transaction():
+    return forward("/transaction")
 
 
 if __name__ == "__main__":
