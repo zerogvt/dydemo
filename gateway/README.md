@@ -1,7 +1,15 @@
 A plain reverse proxy in front of the backend, where all the endpoints live.
-Every request, whatever its method and path, is forwarded unchanged and the
-backend's answer is relayed back, so every call is a two-service distributed
-trace. The gateway adds only two things of its own:
+Each backend endpoint has its own route here that forwards the request
+unchanged and relays the backend's answer, so every call is a two-service
+distributed trace.
+
+The routes are deliberately one per endpoint, not a single catch-all:
+OneAgent names a request after its Flask route rule, so a `/<path:path>` route
+would put every call under one endpoint in Dynatrace. The cost is that a new
+backend endpoint needs a matching route in `gateway.py`; until it has one, the
+gateway answers 404 for it.
+
+The gateway adds only two things of its own:
 
 - **`X-Request-ID`**: kept from the caller or generated, forwarded to the
   backend, returned in the response, and printed in every log line.
@@ -61,5 +69,5 @@ on their own.
 
 ## Endpoints
 
-None of its own: see [backend/README.md](../backend/README.md) and
-[openapi.yaml](../openapi.yaml).
+The backend's, one route each: see [backend/README.md](../backend/README.md)
+and [openapi.yaml](../openapi.yaml).
